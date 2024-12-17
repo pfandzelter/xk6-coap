@@ -35,6 +35,7 @@ the latter is provided by specifying file paths. The `simple.js` example passes
 use use the respective values for PSK authentication. If a `Client` is
 instantiated with both PSK environment variables and certificate file paths,
 certificate authentication will take precedence.
+If neither PSK nor certificates are provided, a pure UDP connection is used.
 
 ```js
 client = new Client(
@@ -67,6 +68,12 @@ client = new Client(
 ```
 > Both are provided but certificate takes precedence.
 
+```js
+client = new Client(
+	"coap.golioth.io:5684",
+);
+```
+> Neither is provided, a pure UDP connection is used.
 
 ### Building a k6 Binary
 
@@ -94,6 +101,6 @@ for more information on how to configure and run tests.
 
 `xk6-coap` is essentially glue machinery that allows for
 [`plgd-dev/go-coap`](https://github.com/plgd-dev/go-coap) /
-[`pion/dtls`](https://github.com/plgd-dev/go-coap) functionality to be exposed
+[`pion/dtls`](https://github.com/pion/dtls) functionality to be exposed
 to `k6` tests. This project would not be possible without the work done by
 contributors (some of whom are on the Golioth team!) on both of those projects.

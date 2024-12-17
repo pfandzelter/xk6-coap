@@ -17,7 +17,8 @@ import (
 	"github.com/plgd-dev/go-coap/v3/dtls"
 	"github.com/plgd-dev/go-coap/v3/message"
 	"github.com/plgd-dev/go-coap/v3/message/pool"
-	udp "github.com/plgd-dev/go-coap/v3/udp/client"
+	"github.com/plgd-dev/go-coap/v3/udp"
+	udpClient "github.com/plgd-dev/go-coap/v3/udp/client"
 	"go.k6.io/k6/js/common"
 	"go.k6.io/k6/js/modules"
 )
@@ -62,19 +63,24 @@ func (c *CoAP) Exports() modules.Exports {
 	}
 }
 
-// client constructs a new CoAP client by establishing a new DTLS cnnection with
-// the provided server endpoint.
+// client constructs a new CoAP client by establishing a new UDP or DTLS
+// connection with the provided server endpoint.
 func (c *CoAP) client(cc goja.ConstructorCall) *goja.Object {
 	rt := c.vu.Runtime()
 	endpoint := cc.Argument(endpointArgIdx).String()
-	conf := &piondtls.Config{
-		ConnectContextMaker: func() (context.Context, func()) {
-			return context.WithTimeout(context.Background(), 10*time.Second)
-		},
-	}
+	var conn *udpClient.Conn
+	var err error
 
 	// Only ECDSA keys are currently supported.
 	if !goja.IsUndefined(cc.Argument(certPathArgIdx)) && !goja.IsUndefined(cc.Argument(keyPathArgIdx)) {
+		// If we have certificates, use DTLS with them.
+
+		conf := &piondtls.Config{
+			ConnectContextMaker: func() (context.Context, func()) {
+				return context.WithTimeout(context.Background(), 10*time.Second)
+			},
+		}
+
 		pemCert, err := os.ReadFile(filepath.Clean(cc.Argument(certPathArgIdx).String()))
 		if err != nil {
 			common.Throw(rt, err)
@@ -103,11 +109,20 @@ func (c *CoAP) client(cc goja.ConstructorCall) *goja.Object {
 			piondtls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8,
 			piondtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 		}
-	}
 
-	// If certificates were provided, they take precedence over PSK as
-	// piondtls will always use PSK if provided.
-	if len(conf.Certificates) == 0 && !goja.IsUndefined(cc.Argument(pskIDEnvArgIdx)) && !goja.IsUndefined(cc.Argument(pskEnvArgIdx)) {
+		conn, err = dtls.Dial(endpoint, conf)
+		if err != nil {
+			common.Throw(rt, err)
+			return nil
+		}
+	} else if !goja.IsUndefined(cc.Argument(pskIDEnvArgIdx)) && !goja.IsUndefined(cc.Argument(pskEnvArgIdx)) {
+		// If certificates were not provided, use PSK.
+		conf := &piondtls.Config{
+			ConnectContextMaker: func() (context.Context, func()) {
+				return context.WithTimeout(context.Background(), 10*time.Second)
+			},
+		}
+
 		pskID, _ := os.LookupEnv(cc.Argument(pskIDEnvArgIdx).String())
 		conf.PSKIdentityHint = []byte(pskID)
 		psk, _ := os.LookupEnv(cc.Argument(pskEnvArgIdx).String())
@@ -120,12 +135,19 @@ func (c *CoAP) client(cc goja.ConstructorCall) *goja.Object {
 			piondtls.TLS_PSK_WITH_AES_128_CCM_8,
 			piondtls.TLS_PSK_WITH_AES_128_CCM,
 		}
-	}
 
-	conn, err := dtls.Dial(endpoint, conf)
-	if err != nil {
-		common.Throw(rt, err)
-		return nil
+		conn, err = dtls.Dial(endpoint, conf)
+		if err != nil {
+			common.Throw(rt, err)
+			return nil
+		}
+	} else {
+		// If no certificates or PSK were provided, use UDP.
+		conn, err = udp.Dial(endpoint)
+		if err != nil {
+			common.Throw(rt, err)
+			return nil
+		}
 	}
 
 	client := &client{
@@ -162,11 +184,11 @@ func (c *CoAP) client(cc goja.ConstructorCall) *goja.Object {
 	return client.obj
 }
 
-// client is a CoAP client with a DTLS connection.
+// client is a CoAP client with a UDP or DTLS connection.
 type client struct {
 	vu   modules.VU
 	tq   *taskqueue.TaskQueue
-	conn *udp.Conn
+	conn *udpClient.Conn
 	obj  *goja.Object
 }
 
